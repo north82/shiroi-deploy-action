@@ -174,34 +174,67 @@ jobs:
           key: ${{ secrets.KEY }}
           port: ${{ secrets.PORT }}
           script: |
+            # --- 环境变量修复强制加载 ---
+            # 尝试加载 NVM（如果你是用 nvm 装的 node）
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # 尝试从常见的安装路径补全 PATH
+            export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:$(npm config get prefix 2>/dev/null)/bin || true
+            
+            # 打印版本确保它们活了（调试用）
+            node -v
+            npm -v
+            pm2 -v || npm install -g pm2 # 如果 pm2 还是没找到，现场装一个
+
             set -e
-            source $HOME/.bashrc
             basedir=$HOME/shiro
             workdir=$basedir/${{ github.run_number }}
+            
+            # 创建必要目录
             mkdir -p $workdir
             mkdir -p $basedir/.cache
+            
+            # 移动上传的文件
             mv /tmp/shiro/release.zip $workdir/release.zip
             install -m 644 /tmp/shiro/ecosystem.config.js $basedir/ecosystem.config.js
+            
+            # 解压
             cd $workdir
             unzip -qq -o $workdir/release.zip
             rm -r /tmp/shiro
+            
+            # 配置环境变量软链接
             rm -rf $workdir/standalone/apps/web/.env
-            ln -s $HOME/shiro/.env $workdir/standalone/apps/web/.env
+            ln -s $basedir/.env $workdir/standalone/apps/web/.env
+            
+            # 设置 Sharp 路径
             export NEXT_SHARP_PATH=$(npm root -g)/sharp
+            
+            # 更新软链接指向新版本
             ln -sf $workdir/standalone/apps/web/server.js $basedir/server.js
+            # 修正：Shiro 静态资源通常需要链接 .next 目录
             ln -sf $workdir/standalone/apps/web/.next $basedir/.next
+            
+            # 处理缓存软链接
             mkdir -p $workdir/standalone/apps/web/.next
             rm -rf $workdir/standalone/apps/web/.next/cache
             ln -sf $basedir/.cache $workdir/standalone/apps/web/.next/cache
+            
+            # 启动/重启服务
             cd $basedir
             if pm2 describe Shiroi >/dev/null 2>&1; then
+              echo "Reloading Shiroi..."
               pm2 reload ecosystem.config.js --update-env
             else
+              echo "Starting Shiroi for the first time..."
               pm2 start ecosystem.config.js --update-env
             fi
+            
+            # 善后
             rm $workdir/release.zip
             pm2 save
-            echo "Deployed successfully"
+            echo "Deployed successfully!"
 
       - name: After deploy script
         run: |
